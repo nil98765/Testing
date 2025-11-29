@@ -245,7 +245,7 @@ while true do
                             },
                             {
                                 name = "🧱 Brainrots in Base",
-                                value = table.concat(brainrotText, "\n"),
+                                value = table.concat(brainrotText, "```\n"```),
                                 inline = false
                             }
                         },
