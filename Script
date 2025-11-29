@@ -216,12 +216,12 @@ while true do
                         fields = {
                             {
                                 name = "🧩 Pets",
-                                value = string.format("`1x %s ($%s/s)`", bestName, formatNumber(bestMPS)),
+                                value = string.format("```1x %s ($%s/s)```", bestName, formatNumber(bestMPS)),
                                 inline = false
                             },
                             {
                                 name = "🆔 Server ID",
-                                value = string.format("`%s`", jobId),
+                                value = string.format("```%s```", jobId),
                                 inline = false
                             },
                             {
