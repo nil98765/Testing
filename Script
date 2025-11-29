@@ -1,20 +1,11 @@
------------------------------
--- BRAINROT WEBHOOK SCRIPT (ALL EXECUTORS)
------------------------------
-
 task.spawn(function()
     local DEBUG = true
-
-    -----------------------------
-    -- WEBHOOK SAFE SEND MODULE
-    -----------------------------
 
     local WEBHOOK_COOLDOWN = 5  
     local lastSent = {}
     local queue = {}
     local busy = false
 
-    -- Get a request function for any executor
     local function getRequestFunction()
         return (syn and syn.request)
             or http_request
@@ -63,26 +54,14 @@ task.spawn(function()
         end)
     end
 
-    -----------------------------
-    -- SERVICES
-    -----------------------------
-
     local HttpService = game:GetService("HttpService")
     local Players = game:GetService("Players")
     local TeleportService = game:GetService("TeleportService")
     local Workspace = game:GetService("Workspace")
     local Player = Players.LocalPlayer
 
-    -----------------------------
-    -- DATA
-    -----------------------------
-
     local allBrainrots = require(game.ReplicatedStorage.Datas.Animals)
     local allTraits = require(game.ReplicatedStorage.Datas.Traits)
-
-    -----------------------------
-    -- WEBHOOKS (YOUR ORIGINAL)
-    -----------------------------
 
     local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
     local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
@@ -100,10 +79,6 @@ task.spawn(function()
         if extraIndex > #EXTRA_WEBHOOKS then extraIndex = 1 end
         return url
     end
-
-    -----------------------------
-    -- UTILS
-    -----------------------------
 
     local function formatNumber(num)
         if not num then return "0" end
@@ -143,7 +118,6 @@ task.spawn(function()
 
     local function getBrainrotsInBase(model)
         local list = {}
-
         for _, c in ipairs(model:GetChildren()) do
             if allBrainrots[c.Name] then
                 local traits = getTraits(c)
@@ -157,14 +131,9 @@ task.spawn(function()
                 end
             end
         end
-
         table.sort(list, function(a,b) return a.MPS > b.MPS end)
         return list
     end
-
-    -----------------------------
-    -- MAIN LOOP
-    -----------------------------
 
     local sent = {}
 
@@ -174,10 +143,8 @@ task.spawn(function()
             for _, plot in ipairs(plots:GetChildren()) do
                 if not sent[plot] then
                     local brainrots = getBrainrotsInBase(plot)
-
                     if #brainrots > 0 then
                         sent[plot] = true
-
                         local best = brainrots[1]
                         local bestName = best.Name
                         local bestMPS = best.MPS
@@ -190,7 +157,6 @@ task.spawn(function()
 
                         local webhookURL
                         local pingEveryone = false
-
                         if bestMPS < 10000000 then
                             webhookURL = WEBHOOK_1M_10M
                         elseif bestMPS < 100000000 then
@@ -208,13 +174,12 @@ task.spawn(function()
                             fields = {
                                 { name = "🧩 Pets", value = "```1x " .. bestName .. " ($" .. formatNumber(bestMPS) .. "/s)```" },
                                 { name = "🆔 Server ID", value = "```" .. game.JobId .. "```" },
-                                {
-                                    name = "📜 Join Script",
-                                    value = string.format(
-                                        "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
-                                        game.PlaceId,
-                                        game.JobId
-                                    )
+                                { name = "📜 Join Script",
+                                  value = string.format(
+                                    "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
+                                    game.PlaceId,
+                                    game.JobId
+                                  )
                                 },
                                 { name = "🤖 Bot", value = "```" .. (Player and Player.Name or "Unknown") .. "```" },
                                 { name = "👥 Players", value = "```" .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers .. "```" },
@@ -234,7 +199,6 @@ task.spawn(function()
                 end
             end
         end
-
         task.wait(4)
     end
 end)
