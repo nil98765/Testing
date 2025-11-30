@@ -64,9 +64,11 @@ task.spawn(function()
         return s
     end
 
+    -- Robust parsing
     local function parseGeneration(text)
         if not text then return 0 end
         if text == "∞" then return math.huge end
+        text = text:upper() -- case-insensitive
         local num = tonumber(text:gsub("[^%d%.]", ""))
         if not num then return 0 end
         if text:find("M") then num = num * 1e6 end
@@ -74,7 +76,7 @@ task.spawn(function()
         return num
     end
 
-    -- Scan for Brainrots in all possible locations
+    -- Scan for Brainrots in all plots
     local function getBrainrotsInPlot(plot)
         local list = {}
         for _, obj in ipairs(plot:GetDescendants()) do
@@ -83,7 +85,6 @@ task.spawn(function()
                 local generationText = obj:FindFirstChild("Generation") and obj.Generation.Text or "0"
                 local genNumber = parseGeneration(generationText)
 
-                -- Cap >100M to inf
                 if genNumber > 1e8 then
                     generationText = "∞"
                     genNumber = math.huge
@@ -110,14 +111,12 @@ task.spawn(function()
                         sentPlots[plot] = true
                         local best = brainrots[1]
 
-                        -- Build Brainrot lines
                         local lines = {}
                         for i,b in ipairs(brainrots) do
                             local emoji = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
                             table.insert(lines, emoji.." "..b.Name.." — $"..b.MPS)
                         end
 
-                        -- Determine webhook
                         local webhookURL
                         local pingEveryone = false
                         if best.NumMPS == math.huge then
@@ -150,7 +149,6 @@ task.spawn(function()
 
                         QueueWebhook(webhookURL, payload)
 
-                        -- SERVER HOP
                         task.wait(1)
                         local success, servers = pcall(function()
                             return TeleportService:GetPlayerPlaceInstances(game.PlaceId)
