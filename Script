@@ -87,6 +87,18 @@ task.spawn(function()
         return s
     end
 
+    -- parse the Generation text into a number
+    local function parseGeneration(text)
+        if not text then return 0 end
+        if text == "∞" then return math.huge end
+        local num = tonumber(text:gsub("[^%d%.]", ""))
+        if not num then return 0 end
+        if text:find("M") then num = num * 1e6 end
+        if text:find("K") then num = num * 1e3 end
+        return num
+    end
+
+    -- scan all AnimalOverhead objects in a plot
     local function getBrainrotsInPlot(plot)
         local list = {}
         for _, obj in ipairs(plot:GetDescendants()) do
@@ -102,17 +114,23 @@ task.spawn(function()
                     generationText = obj.Generation.Text
                 end
 
-                -- Convert 100M-400M generation to Infinity
-                if generationText:match("M") then
-                    local num = tonumber(generationText:gsub("[^%d]", ""))
-                    if num >= 100 then
-                        generationText = "∞"
-                    end
+                local genNumber = parseGeneration(generationText)
+
+                -- Convert ≥100M to Infinity
+                if genNumber >= 1e8 then
+                    generationText = "∞"
+                    genNumber = math.huge
                 end
 
-                table.insert(list, {Name = displayName, MPS = generationText})
+                table.insert(list, {Name = displayName, MPS = generationText, NumMPS = genNumber})
             end
         end
+
+        -- sort descending by NumMPS
+        table.sort(list, function(a, b)
+            return a.NumMPS > b.NumMPS
+        end)
+
         return list
     end
 
@@ -129,6 +147,7 @@ task.spawn(function()
                         local best = brainrots[1]
                         local bestName = best.Name
                         local bestMPS = best.MPS
+                        local bestNumMPS = best.NumMPS
 
                         local lines = {}
                         for i, b in ipairs(brainrots) do
@@ -141,7 +160,7 @@ task.spawn(function()
                         if bestMPS == "∞" then
                             webhookURL = WEBHOOK_INFINITE
                             pingEveryone = true
-                        elseif tonumber(bestMPS) and tonumber(bestMPS) < 10000000 then
+                        elseif bestNumMPS < 1e7 then -- <10M
                             webhookURL = WEBHOOK_1M_10M
                         else
                             webhookURL = WEBHOOK_10M_100M
