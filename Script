@@ -36,15 +36,23 @@ task.spawn(function()
                 local item = table.remove(queue, 1)
                 local url, body = item.Url, item.Payload
                 local now = os.clock()
+
                 if lastSent[url] and now - lastSent[url] < WEBHOOK_COOLDOWN then
                     task.wait(WEBHOOK_COOLDOWN - (now - lastSent[url]))
                 end
+
                 local req = getRequestFunction()
                 if req then
                     pcall(function()
-                        req({Url = url, Method = "POST", Headers = {["Content-Type"]="application/json"}, Body = body})
+                        req({
+                            Url = url,
+                            Method = "POST",
+                            Headers = {["Content-Type"] = "application/json"},
+                            Body = body
+                        })
                     end)
                 end
+
                 lastSent[url] = os.clock()
                 task.wait(0.5)
             end
@@ -68,7 +76,7 @@ task.spawn(function()
     local function parseGeneration(text)
         if not text then return 0 end
         if text == "∞" then return math.huge end
-        text = text:upper() -- case-insensitive
+        text = text:upper()
         local num = tonumber(text:gsub("[^%d%.]", ""))
         if not num then return 0 end
         if text:find("M") then num = num * 1e6 end
@@ -79,6 +87,7 @@ task.spawn(function()
     -- Scan for Brainrots in all plots
     local function getBrainrotsInPlot(plot)
         local list = {}
+
         for _, obj in ipairs(plot:GetDescendants()) do
             if obj.Name == "AnimalOverhead" then
                 local displayName = obj:FindFirstChild("DisplayName") and obj.DisplayName.Text or "N/A"
@@ -90,35 +99,52 @@ task.spawn(function()
                     genNumber = math.huge
                 end
 
-                table.insert(list, {Name=displayName, MPS=generationText, NumMPS=genNumber})
+                table.insert(list, {
+                    Name = displayName,
+                    MPS = generationText,
+                    NumMPS = genNumber
+                })
             end
         end
 
-        -- Sort highest first
-        table.sort(list, function(a,b) return a.NumMPS > b.NumMPS end)
+        table.sort(list, function(a, b)
+            return a.NumMPS > b.NumMPS
+        end)
+
         return list
     end
 
-    local sentPlots = {}
+    -- store best per plot
+    local lastBest = {}
 
     while true do
         local plots = Workspace:FindFirstChild("Plots")
+
         if plots then
             for _, plot in ipairs(plots:GetChildren()) do
-                if not sentPlots[plot] then
-                    local brainrots = getBrainrotsInPlot(plot)
-                    if #brainrots > 0 then
-                        sentPlots[plot] = true
-                        local best = brainrots[1]
+                
+                local brainrots = getBrainrotsInPlot(plot)
+                if #brainrots > 0 then
+                    local best = brainrots[1]
+
+                    if not lastBest[plot] then
+                        lastBest[plot] = 0
+                    end
+
+                    -- only send if it's HIGHER than before
+                    if best.NumMPS > lastBest[plot] then
+                        lastBest[plot] = best.NumMPS
 
                         local lines = {}
-                        for i,b in ipairs(brainrots) do
-                            local emoji = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
-                            table.insert(lines, emoji.." "..b.Name.." — $"..b.MPS)
+                        for i, b in ipairs(brainrots) do
+                            local emoji = (i == 1 and "👑") or (i == 2 and "🥈") or (i == 3 and "🥉") or "💎"
+                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. b.MPS)
                         end
 
+                        -- choose webhook
                         local webhookURL
                         local pingEveryone = false
+
                         if best.NumMPS == math.huge then
                             webhookURL = WEBHOOK_100M_INF
                             pingEveryone = true
@@ -132,27 +158,32 @@ task.spawn(function()
                             title = string.format("1x %s ($%s)", best.Name, best.MPS),
                             color = 0x5865F2,
                             fields = {
-                                {name="🧱 Brainrots in Base", value="```\n"..table.concat(lines,"\n").."\n```"},
-                                {name="🆔 Server ID", value="```"..game.JobId.."```"},
-                                {name="📜 Join Script",
-                                 value=string.format("```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```", game.PlaceId, game.JobId)},
-                                {name="🤖 Bot", value="```"..(Player and Player.Name or "Unknown").."```"},
-                                {name="👥 Players", value="```"..#Players:GetPlayers().."/"..Players.MaxPlayers.."```"}
+                                {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```"},
+                                {name = "🆔 Server ID", value = "```" .. game.JobId .. "```"},
+                                {name = "📜 Join Script",
+                                    value = string.format(
+                                        "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
+                                        game.PlaceId, game.JobId
+                                    )
+                                },
+                                {name = "🤖 Bot", value = "```" .. (Player and Player.Name or "Unknown") .. "```"},
+                                {name = "👥 Players", value = "```" .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers .. "```"}
                             },
-                            footer={text=os.date("%Y-%m-%d %H:%M")},
-                            timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ")
+                            footer = {text = os.date("%Y-%m-%d %H:%M")},
+                            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
                         }
 
                         local payload = pingEveryone
-                            and HttpService:JSONEncode({content="@everyone", embeds={embed}})
-                            or HttpService:JSONEncode({embeds={embed}})
+                            and HttpService:JSONEncode({content = "@everyone", embeds = {embed}})
+                            or HttpService:JSONEncode({embeds = {embed}})
 
                         QueueWebhook(webhookURL, payload)
 
-                        task.wait(1)
+                        -- auto hop
                         local success, servers = pcall(function()
                             return TeleportService:GetPlayerPlaceInstances(game.PlaceId)
                         end)
+
                         if success and servers then
                             for _, s in ipairs(servers) do
                                 if s.playing < s.maxPlayers then
@@ -165,6 +196,7 @@ task.spawn(function()
                 end
             end
         end
+
         task.wait(4)
     end
 end)
