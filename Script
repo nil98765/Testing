@@ -1,9 +1,10 @@
--- Safer Brainrot Server Hopper / Webhook Notifier
--- Fix: guard against nil NumMPS during comparisons and sorting (the "attempt to compare nil < number" error).
--- Enable DEBUG = true to get diagnostic prints.
+-- Robust Brainrot Hopper / Webhook Notifier
+-- Fixes: every numeric comparison is now done against ensured numeric values (defaults to 0).
+-- Added DEBUG logs around the sort and comparison to pinpoint remaining nils if any.
+-- Replace your existing LocalScript with this file and enable DEBUG = true to capture diagnostics.
 
 task.spawn(function()
-    local DEBUG = false
+    local DEBUG = true            -- set true to get detailed output for diagnosing the nil comparison
     local GLOBAL_BEST = 0
 
     local HttpService = game:GetService("HttpService")
@@ -20,38 +21,19 @@ task.spawn(function()
 
     local function sendRequest(url, payload)
         local encoded = HttpService:JSONEncode(payload)
-
-        local req =
-            (syn and syn.request)
-            or http_request
-            or (http and http.request)
-            or request
-
+        local req = (syn and syn.request) or http_request or (http and http.request) or request
         if not req then
             warn("❌ Your executor does not support HTTP requests!")
             return false
         end
-
         local ok, res = pcall(function()
-            return req({
-                Url = url,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = encoded
-            })
+            return req({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = encoded})
         end)
-
         if not ok then
             ok, res = pcall(function()
-                return req({
-                    url = url,
-                    method = "POST",
-                    headers = {["content-type"] = "application/json"},
-                    body = encoded
-                })
+                return req({url = url, method = "POST", headers = {["content-type"] = "application/json"}, body = encoded})
             end)
         end
-
         if DEBUG then
             if ok then
                 print("✔ Webhook request succeeded:", (type(res) == "table" and (res.StatusCode or res.status) or tostring(res)))
@@ -59,7 +41,6 @@ task.spawn(function()
                 warn("❌ Webhook request failed:", res)
             end
         end
-
         return ok
     end
 
@@ -67,53 +48,60 @@ task.spawn(function()
         if not text then return 0 end
         if text == "∞" then return math.huge end
         local t = tostring(text):upper()
-        local n = tonumber(t:gsub("[^%d%.]", "")) or 0
+        local n = tonumber(t:gsub("[^%d%.%-]", "")) or 0
+        -- handle possible negative or malformed strings robustly
         if t:find("M") then n = n * 1e6 end
         if t:find("K") then n = n * 1e3 end
+        if n ~= n then -- NaN guard
+            return 0
+        end
         return n
+    end
+
+    local function safeTextValue(obj)
+        if not obj then return nil end
+        if type(obj.Text) == "string" and obj.Text ~= "" then return obj.Text end
+        if obj.Value ~= nil then return tostring(obj.Value) end
+        return nil
     end
 
     local function getPlotBrainrots(plot)
         local list = {}
         for _, obj in ipairs(plot:GetDescendants()) do
-            if obj.Name == "AnimalOverhead" then
+            if obj and obj.Name == "AnimalOverhead" then
                 local dn = obj:FindFirstChild("DisplayName")
                 local gn = obj:FindFirstChild("Generation")
-                local nameText = "Unknown"
-                local genText = "0"
-
-                if dn then
-                    if type(dn.Text) == "string" then
-                        nameText = dn.Text
-                    elseif dn.Value ~= nil then
-                        nameText = tostring(dn.Value)
-                    end
-                end
-
-                if gn then
-                    if type(gn.Text) == "string" then
-                        genText = gn.Text
-                    elseif gn.Value ~= nil then
-                        genText = tostring(gn.Value)
-                    end
-                end
-
+                local nameText = safeTextValue(dn) or "Unknown"
+                local genText = safeTextValue(gn) or "0"
                 local num = parseGen(genText) or 0
-                -- Ensure numeric NumMPS is always present (avoid nil)
-                table.insert(list, {
-                    Name = nameText,
-                    MPS = tostring(genText),
-                    NumMPS = num
-                })
+                -- Ensure NumMPS is always a number
+                if type(num) ~= "number" then num = 0 end
+                table.insert(list, { Name = nameText, MPS = tostring(genText), NumMPS = num })
             end
         end
 
-        -- Safe comparator: treat missing NumMPS as 0
+        -- Debug: show raw NumMPS values before sort
+        if DEBUG then
+            for i, v in ipairs(list) do
+                print(("DEBUG pre-sort: index=%d Name=%s NumMPS=%s"):format(i, tostring(v.Name), tostring(v.NumMPS)))
+            end
+        end
+
+        -- Safe comparator: coerce missing to 0 and ensure numbers
         table.sort(list, function(a, b)
-            local an = (a and a.NumMPS) or 0
-            local bn = (b and b.NumMPS) or 0
+            local an = (a and tonumber(a.NumMPS)) or 0
+            local bn = (b and tonumber(b.NumMPS)) or 0
+            -- final guard: ensure numeric
+            if type(an) ~= "number" then an = 0 end
+            if type(bn) ~= "number" then bn = 0 end
             return an > bn
         end)
+
+        if DEBUG then
+            for i, v in ipairs(list) do
+                print(("DEBUG post-sort: rank=%d Name=%s NumMPS=%s"):format(i, tostring(v.Name), tostring(v.NumMPS)))
+            end
+        end
 
         return list
     end
@@ -121,14 +109,22 @@ task.spawn(function()
     local function getBestInServer()
         local best, bestPlot
         local plots = Workspace:FindFirstChild("Plots")
-        if not plots then return nil, nil end
+        if not plots then
+            if DEBUG then warn("No 'Plots' folder found in Workspace") end
+            return nil, nil
+        end
 
         for _, plot in ipairs(plots:GetChildren()) do
+            if not plot then continue end
             local list = getPlotBrainrots(plot)
             if #list > 0 then
                 local candidate = list[1]
-                local candNum = (candidate and candidate.NumMPS) or 0
-                if (not best) or (candNum > ((best.NumMPS) or 0)) then
+                local candNum = tonumber((candidate and candidate.NumMPS) or 0) or 0
+                local bestNum = tonumber((best and best.NumMPS) or 0) or 0
+                if DEBUG then
+                    print(("Checking plot '%s' candidate NumMPS=%s currentBest=%s"):format(tostring(plot.Name), tostring(candNum), tostring(bestNum)))
+                end
+                if (not best) or (candNum > bestNum) then
                     best = candidate
                     bestPlot = plot
                 end
@@ -139,14 +135,17 @@ task.spawn(function()
 
     while task.wait(4) do
         local best, plot = getBestInServer()
-        local bestNum = (best and best.NumMPS) or 0
+        local bestNum = tonumber((best and best.NumMPS) or 0) or 0
+
+        if DEBUG then
+            print(("Iteration: bestName=%s bestNum=%s GLOBAL_BEST=%s"):format(tostring((best and best.Name) or "nil"), tostring(bestNum), tostring(GLOBAL_BEST)))
+        end
 
         if best and bestNum > GLOBAL_BEST then
             GLOBAL_BEST = bestNum
 
             local list = getPlotBrainrots(plot)
             local lines = {}
-
             for i, b in ipairs(list) do
                 local emoji = (i == 1 and "👑") or (i == 2 and "🥈") or (i == 3 and "🥉") or "💎"
                 table.insert(lines, emoji .. " " .. (b.Name or "Unknown") .. " — $" .. (b.MPS or "0"))
@@ -155,8 +154,6 @@ task.spawn(function()
 
             local url = WEBHOOK_1M_10M
             local ping = false
-
-            -- Use bestNum (guaranteed number) for comparisons
             if bestNum >= 1e8 then
                 url = WEBHOOK_100M_INF
                 ping = true
@@ -166,7 +163,7 @@ task.spawn(function()
 
             local playerName = (Player and Player.Name) and Player.Name or "Unknown"
             local playersCount = #Players:GetPlayers()
-            local maxPlayers = (Players.MaxPlayers or "N/A")
+            local maxPlayers = Players.MaxPlayers or "N/A"
 
             local embed = {
                 title = string.format("1x %s ($%s)", best.Name or "Unknown", best.MPS or "0"),
@@ -174,13 +171,7 @@ task.spawn(function()
                 fields = {
                     {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```"},
                     {name = "🆔 Server ID", value = "```" .. tostring(game.JobId or "Unknown") .. "```"},
-                    {
-                        name = "📜 Join Script",
-                        value = string.format(
-                            "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
-                            tonumber(game.PlaceId) or 0, tostring(game.JobId or "")
-                        )
-                    },
+                    {name = "📜 Join Script", value = string.format("```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```", tonumber(game.PlaceId) or 0, tostring(game.JobId or ""))},
                     {name = "🤖 Bot", value = "```" .. playerName .. "```"},
                     {name = "👥 Players", value = "```" .. tostring(playersCount) .. "/" .. tostring(maxPlayers) .. "```"}
                 },
@@ -196,28 +187,18 @@ task.spawn(function()
             pcall(function()
                 if Player then
                     local s, _ = pcall(function() TeleportService:Teleport(game.PlaceId) end)
-                    if not s then
-                        pcall(function() TeleportService:Teleport(game.PlaceId, Player) end)
-                    end
+                    if not s then pcall(function() TeleportService:Teleport(game.PlaceId, Player) end) end
                 else
                     pcall(function() TeleportService:Teleport(game.PlaceId) end)
                 end
             end)
         else
             if DEBUG then
-                if not best then
-                    warn("No best found this iteration.")
-                else
-                    warn("BestNum (" .. tostring(bestNum) .. ") <= GLOBAL_BEST (" .. tostring(GLOBAL_BEST) .. ") — hopping")
-                end
+                if not best then warn("No best found this iteration.") else warn(("BestNum (%s) <= GLOBAL_BEST (%s) — hopping"):format(tostring(bestNum), tostring(GLOBAL_BEST))) end
             end
             task.wait(2)
             pcall(function()
-                if Player then
-                    TeleportService:Teleport(game.PlaceId)
-                else
-                    TeleportService:Teleport(game.PlaceId)
-                end
+                if Player then TeleportService:Teleport(game.PlaceId) else TeleportService:Teleport(game.PlaceId) end
             end)
         end
     end
