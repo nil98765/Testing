@@ -60,8 +60,6 @@ task.spawn(function()
     local Workspace = game:GetService("Workspace")
     local Player = Players.LocalPlayer
 
-    local allBrainrots = require(game.ReplicatedStorage.Datas.Animals)
-
     local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
     local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
     local WEBHOOK_100M_400M = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
@@ -90,29 +88,31 @@ task.spawn(function()
         return s
     end
 
-    local function getBrainrotsInBase(model)
-        local list = {}
-        for _, c in ipairs(model:GetChildren()) do
-            if allBrainrots[c.Name] then
-                table.insert(list, { Name = c.Name })
-            elseif c:IsA("Model") then
-                for _, v in ipairs(getBrainrotsInBase(c)) do
-                    table.insert(list, v)
-                end
-            end
+    local function parseMoney(str)
+        -- remove $ and /s
+        local clean = str:gsub("%$", ""):gsub("/s", "")
+        local number, unit = clean:match("([%d%.]+)(%a?)")
+        if not number then return 0 end
+        local n = tonumber(number) or 0
+        if unit == "M" then
+            n = n * 1e6
+        elseif unit == "K" then
+            n = n * 1e3
         end
-        return list
+        return n
     end
 
-    local function getBrainrotMoney(plot)
-        local moneyInfo = {}
+    local function getBrainrotsInBase(plot)
+        local list = {}
         for _, obj in ipairs(plot:GetDescendants()) do
             if obj.Name == "Generation" and obj.Parent and obj.Parent.Name == "AnimalOverhead" then
-                local value = obj.Text or obj.Value or 0
-                moneyInfo[obj.Parent.Name] = tonumber(value) or 0
+                local parentName = obj.Parent.Parent.Name
+                local money = parseMoney(obj.Text or obj.Value or "$0/s")
+                table.insert(list, { Name = parentName, MPS = money })
             end
         end
-        return moneyInfo
+        table.sort(list, function(a,b) return a.MPS > b.MPS end)
+        return list
     end
 
     local sent = {}
@@ -123,19 +123,17 @@ task.spawn(function()
             for _, plot in ipairs(plots:GetChildren()) do
                 if not sent[plot] then
                     local brainrots = getBrainrotsInBase(plot)
-                    local moneyInfo = getBrainrotMoney(plot)
 
                     if #brainrots > 0 then
                         sent[plot] = true
                         local best = brainrots[1]
                         local bestName = best.Name
-                        local bestMPS = moneyInfo[bestName] or 0
+                        local bestMPS = best.MPS
 
                         local lines = {}
                         for i, b in ipairs(brainrots) do
                             local emoji = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
-                            local realMoney = moneyInfo[b.Name] or 0
-                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. formatNumber(realMoney) .. "/s")
+                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. formatNumber(b.MPS) .. "/s")
                         end
 
                         local webhookURL
