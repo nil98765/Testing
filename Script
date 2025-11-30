@@ -13,6 +13,7 @@ local WEBHOOKS = {
     {url = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_", min = 1e8, max = 1e12, ping = true}      -- 100M+
 }
 
+-- Get the correct webhook based on MPS
 local function getWebhook(mps)
     for _, wb in ipairs(WEBHOOKS) do
         if mps >= wb.min and mps < wb.max then
@@ -59,16 +60,34 @@ end
 -- Send webhook
 local function sendWebhook(url, ping, embed)
     local payload = HttpService:JSONEncode(ping and {content = "@everyone", embeds = {embed}} or {embeds = {embed}})
-    local r = syn and syn.request or http_request
-    if r then
-        pcall(function()
-            r({
+
+    local requestFunction = nil
+
+    -- Check different HTTP request functions depending on executor
+    if syn and syn.request then
+        requestFunction = syn.request
+    elseif http_request then
+        requestFunction = http_request
+    elseif fluxus and fluxus.request then
+        requestFunction = fluxus.request
+    elseif request then
+        requestFunction = request
+    end
+
+    if requestFunction then
+        local success, err = pcall(function()
+            requestFunction({
                 Url = url,
                 Method = "POST",
                 Headers = {["Content-Type"] = "application/json"},
                 Body = payload
             })
         end)
+        if not success then
+            warn("Webhook failed: ", err)
+        end
+    else
+        warn("No valid HTTP request function found!")
     end
 end
 
