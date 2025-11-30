@@ -56,12 +56,16 @@ task.spawn(function()
 
     local HttpService = game:GetService("HttpService")
     local Players = game:GetService("Players")
+    local TeleportService = game:GetService("TeleportService")
     local Workspace = game:GetService("Workspace")
     local Player = Players.LocalPlayer
 
+    local allBrainrots = require(game.ReplicatedStorage.Datas.Animals)
+    local allTraits = require(game.ReplicatedStorage.Datas.Traits)
+
     local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
     local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
-    local WEBHOOK_INFINITE = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
+    local WEBHOOK_100M_400M = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
 
     local EXTRA_WEBHOOKS = {
         "https://discord.com/api/webhooks/1444072435736379393/dDVwOZLbbiW0svzYwH8TOllK6Tm42th0s_kfD6j3SHmajGvuKujEBTujl8EBfPC3zurI",
@@ -87,33 +91,59 @@ task.spawn(function()
         return s
     end
 
-    local function getBrainrotsInPlot(plot)
-        local list = {}
-        for _, obj in ipairs(plot:GetDescendants()) do
-            if obj.Name == "AnimalOverhead" then
-                local displayName = "N/A"
-                local generationText = "0"
-
-                if obj:FindFirstChild("DisplayName") then
-                    displayName = obj.DisplayName.Text
-                end
-
-                if obj:FindFirstChild("Generation") then
-                    generationText = obj.Generation.Text
-                end
-
-                -- Convert 100M-400M generation to Infinity
-                if generationText:match("M") then
-                    local num = tonumber(generationText:gsub("[^%d]", ""))
-                    if num >= 100 then
-                        generationText = "∞"
-                    end
-                end
-
-                table.insert(list, {Name = displayName, MPS = generationText})
+    local function getTraits(model)
+        local traits = {}
+        for _, child in ipairs(model:GetChildren()) do
+            if child:IsA("StringValue") and allTraits[child.Name] then
+                table.insert(traits, child.Name)
             end
         end
+        return traits
+    end
+
+    local function calculateTraitMultiplier(traits)
+        local total = 1
+        for _, t in ipairs(traits) do
+            local m = allTraits[t] and allTraits[t].MultiplierModifier or 1
+            total = total * m
+        end
+        return total
+    end
+
+    local function getFinalMPS(name, traits)
+        local data = allBrainrots[name]
+        if not data then return 0 end
+        return (data.Generation or 0) * calculateTraitMultiplier(traits)
+    end
+
+    local function getBrainrotsInBase(model)
+        local list = {}
+        for _, c in ipairs(model:GetChildren()) do
+            if allBrainrots[c.Name] then
+                local traits = getTraits(c)
+                local mps = getFinalMPS(c.Name, traits)
+                if mps >= 1000000 then
+                    table.insert(list, { Name = c.Name, MPS = mps })
+                end
+            elseif c:IsA("Model") then
+                for _, v in ipairs(getBrainrotsInBase(c)) do
+                    table.insert(list, v)
+                end
+            end
+        end
+        table.sort(list, function(a,b) return a.MPS > b.MPS end)
         return list
+    end
+
+    local function getBrainrotMoney(plot)
+        local moneyInfo = {}
+        for _, obj in ipairs(plot:GetDescendants()) do
+            if obj.Name == "Generation" and obj.Parent and obj.Parent.Name == "AnimalOverhead" then
+                local value = obj.Text or obj.Value or 0
+                moneyInfo[obj.Parent.Name] = tonumber(value) or 0
+            end
+        end
+        return moneyInfo
     end
 
     local sent = {}
@@ -123,7 +153,9 @@ task.spawn(function()
         if plots then
             for _, plot in ipairs(plots:GetChildren()) do
                 if not sent[plot] then
-                    local brainrots = getBrainrotsInPlot(plot)
+                    local brainrots = getBrainrotsInBase(plot)
+                    local moneyInfo = getBrainrotMoney(plot)
+
                     if #brainrots > 0 then
                         sent[plot] = true
                         local best = brainrots[1]
@@ -133,25 +165,28 @@ task.spawn(function()
                         local lines = {}
                         for i, b in ipairs(brainrots) do
                             local emoji = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
-                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. b.MPS .. "/s")
+                            local realMoney = moneyInfo[b.Name] or b.MPS
+                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. formatNumber(realMoney) .. "/s")
                         end
 
                         local webhookURL
                         local pingEveryone = false
-                        if bestMPS == "∞" then
-                            webhookURL = WEBHOOK_INFINITE
-                            pingEveryone = true
-                        elseif tonumber(bestMPS) and tonumber(bestMPS) < 10000000 then
+                        if bestMPS < 10000000 then
                             webhookURL = WEBHOOK_1M_10M
-                        else
+                        elseif bestMPS < 100000000 then
                             webhookURL = WEBHOOK_10M_100M
+                        elseif bestMPS <= 400000000 then
+                            webhookURL = WEBHOOK_100M_400M
+                            pingEveryone = true
+                        else
+                            webhookURL = getFallbackWebhook()
                         end
 
                         local embed = {
-                            title = string.format("1x %s ($%s/s)", bestName, bestMPS),
+                            title = string.format("1x %s ($%s/s)", bestName, formatNumber(moneyInfo[bestName] or bestMPS)),
                             color = 0x5865F2,
                             fields = {
-                                { name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```" },
+                                { name = "🧩 Pets", value = "```1x " .. bestName .. " ($" .. formatNumber(moneyInfo[bestName] or bestMPS) .. "/s)```" },
                                 { name = "🆔 Server ID", value = "```" .. game.JobId .. "```" },
                                 { name = "📜 Join Script",
                                   value = string.format(
@@ -161,7 +196,8 @@ task.spawn(function()
                                   )
                                 },
                                 { name = "🤖 Bot", value = "```" .. (Player and Player.Name or "Unknown") .. "```" },
-                                { name = "👥 Players", value = "```" .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers .. "```" }
+                                { name = "👥 Players", value = "```" .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers .. "```" },
+                                { name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```" }
                             },
                             footer = { text = os.date("%Y-%m-%d %H:%M") },
                             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
