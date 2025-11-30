@@ -1,134 +1,126 @@
-task.spawn(function()
-    local HttpService = game:GetService("HttpService")
-    local Players = game:GetService("Players")
-    local Workspace = game:GetService("Workspace")
-    local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local Workspace = game:GetService("Workspace")
 
-    local Player = Players.LocalPlayer
-    local DEBUG = false
+-- BRAINROT DATA (PRICE + GENERATION)
+local allBrainrots = require(game:GetService("ReplicatedStorage").Datas.Animals)
 
-    -- YOUR WEBHOOKS
-    local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/WEBHOOK1"
-    local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/WEBHOOK2"
-    local WEBHOOK_100M_INF = "https://discord.com/api/webhooks/WEBHOOK3"
+-- 3 WEBHOOKS BASED ON GENERATION
+local WEBHOOKS = {
+    {url = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-", min = 1e6, max = 1e7, ping = false},       -- 1M - 10M
+    {url = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU", min = 1e7, max = 1e8, ping = false},       -- 10M - 100M
+    {url = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_", min = 1e8, max = 1e12, ping = true}      -- 100M+
+}
 
-    -- Executor compatible HTTP request sender
-    local function sendRequest(url, payload)
-        local encoded = HttpService:JSONEncode(payload)
-        local req = (syn and syn.request) or http_request or (http and http.request) or request
-        if not req then
-            warn("❌ HTTP requests unsupported in this executor!")
-            return
+local function getWebhook(mps)
+    for _, wb in ipairs(WEBHOOKS) do
+        if mps >= wb.min and mps < wb.max then
+            return wb.url, wb.ping
         end
+    end
+    return nil, false
+end
+
+-- Number formatting
+local function formatNumber(num)
+    local formatted = tostring(math.floor(num))
+    while true do
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
+        if k == 0 then break end
+    end
+    return formatted
+end
+
+-- Scan plots and calculate real generation
+local function scanPlot(plot)
+    local output = {}
+    local best = {MPS = 0, Name = "N/A"}
+
+    for _, obj in ipairs(plot:GetDescendants()) do
+        if obj.Name == "AnimalOverhead" then
+            local displayName = obj:FindFirstChild("DisplayName") and obj.DisplayName.Text or "Unknown"
+            local generation = obj:FindFirstChild("Generation") and tonumber(obj.Generation.Text:gsub("[^%d.]", "")) or 0
+
+            if generation >= 1e6 then
+                table.insert(output, string.format("%s = Generation %s", displayName, formatNumber(generation)))
+            end
+
+            if generation > best.MPS then
+                best.MPS = generation
+                best.Name = displayName
+            end
+        end
+    end
+
+    return output, best
+end
+
+-- Send webhook
+local function sendWebhook(url, ping, embed)
+    local payload = HttpService:JSONEncode(ping and {content = "@everyone", embeds = {embed}} or {embeds = {embed}})
+    local r = syn and syn.request or http_request
+    if r then
         pcall(function()
-            req({
+            r({
                 Url = url,
                 Method = "POST",
                 Headers = {["Content-Type"] = "application/json"},
-                Body = encoded
+                Body = payload
             })
         end)
     end
+end
 
-    -- Parse MPS text like "$2.5M"
-    local function parseGen(text)
-        if not text then return 0 end
-        local s = tostring(text):gsub("[%s$,]", ""):upper()
-        if s == "∞" then return math.huge end
-        local num = tonumber(s:match("[%d%.]+") or "0") or 0
-        if s:find("M") then num *= 1e6 end
-        if s:find("K") then num *= 1e3 end
-        return num
-    end
-
-    local function safeTextValue(obj)
-        return obj and (obj.Text or obj.Value and tostring(obj.Value) or nil)
-    end
-
-    -- Get all brainrots in a plot
-    local function getPlotBrainrots(plot)
-        local list = {}
-        for _, obj in ipairs(plot:GetDescendants()) do
-            if obj.Name == "AnimalOverhead" then
-                local nameText = safeTextValue(obj:FindFirstChild("DisplayName")) or "Unknown"
-                local genText  = safeTextValue(obj:FindFirstChild("Generation")) or "0"
-                table.insert(list, {
-                    Name = nameText,
-                    MPS = genText,
-                    NumMPS = parseGen(genText)
-                })
+-- Server hopping
+local function serverHop()
+    local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+    local success, response = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(url))
+    end)
+    if success and response and response.data then
+        for _, s in ipairs(response.data) do
+            if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, Players.LocalPlayer)
+                break
             end
         end
-        table.sort(list, function(a,b) return a.NumMPS > b.NumMPS end)
-        return list
     end
+end
 
-    -- Find best Brainrot across all plots
-    local function getBestInServer()
-        local best, bestPlot
-        local plots = Workspace:FindFirstChild("Plots")
-        if not plots then return nil end
+-- MAIN LOOP
+while true do
+    local plots = Workspace:FindFirstChild("Plots")
+    if plots then
         for _, plot in ipairs(plots:GetChildren()) do
-            local list = getPlotBrainrots(plot)
-            if #list > 0 then
-                local candidate = list[1]
-                if not best or candidate.NumMPS > best.NumMPS then
-                    best = candidate
-                    bestPlot = plot
+            local lines, best = scanPlot(plot)
+            if #lines > 0 then
+                local playersCount = #Players:GetPlayers()
+                local maxPlayers = 8  -- Steal a Brainrot max players
+                local playerName = Players.LocalPlayer.Name
+
+                local webhookURL, pingEveryone = getWebhook(best.MPS)
+                if webhookURL then
+                    local embed = {
+                        title = string.format("1x %s ($%s)", best.Name or "Unknown", formatNumber(best.MPS)),
+                        color = 0x5865F2,
+                        fields = {
+                            {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```"},
+                            {name = "🆔 Server ID", value = "```".. tostring(game.JobId) .. "```"},
+                            {name = "📜 Join Script", value = string.format("```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```", game.PlaceId, game.JobId)},
+                            {name = "🤖 Bot", value = "```" .. playerName .. "```"},
+                            {name = "👥 Players", value = "```" .. tostring(playersCount) .. "/" .. tostring(maxPlayers) .. "```"}
+                        },
+                        footer = {text = os.date("%Y-%m-%d %H:%M")},
+                        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                    }
+
+                    sendWebhook(webhookURL, pingEveryone, embed)
                 end
             end
         end
-        return best, bestPlot
     end
 
-    -- MAIN LOOP (runs forever)
-    while task.wait(5) do
-        local best, plot = getBestInServer()
-        local bestNum = best and best.NumMPS or 0
-        
-        if best and bestNum >= 1e6 then -- Only send if ≥1M MPS
-            local list = getPlotBrainrots(plot)
-            local lines = {}
-            for i, b in ipairs(list) do
-                local emoji = (i == 1 and "👑") or (i == 2 and "🥈") or (i == 3 and "🥉") or "💎"
-                table.insert(lines, emoji .. " " .. (b.Name or "Unknown") .. " — $" .. (b.MPS or "0"))
-                if i >= 10 then break end
-            end
-
-            -- Select webhook based on tiers
-            local url = WEBHOOK_1M_10M
-            local ping = false
-            if bestNum >= 1e8 then
-                url = WEBHOOK_100M_INF
-                ping = true
-            elseif bestNum >= 1e7 then
-                url = WEBHOOK_10M_100M
-            end
-
-            local playerName = Player and Player.Name or "Unknown"
-            local playersCount = #Players:GetPlayers()
-            local maxPlayers = Players.MaxPlayers or "N/A"
-
-            local embed = {
-                title = string.format("1x %s ($%s)", best.Name or "Unknown", best.MPS or "0"),
-                color = 0x5865F2,
-                fields = {
-                    {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```"},
-                    {name = "🆔 Server ID", value = "```".. tostring(game.JobId) .. "```"},
-                    {name = "📜 Join Script", value = string.format("```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```", game.PlaceId, game.JobId)},
-                    {name = "🤖 Bot", value = "```" .. playerName .. "```"},
-                    {name = "👥 Players", value = "```" .. tostring(playersCount) .. "/" .. tostring(maxPlayers) .. "```"}
-                },
-                footer = {text = os.date("%Y-%m-%d %H:%M")},
-                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-            }
-
-            sendRequest(url, ping and {content = "@everyone", embeds = {embed}} or {embeds = {embed}})
-        end
-
-        -- ALWAYS server hop, even if nothing found
-        pcall(function()
-            TeleportService:Teleport(game.PlaceId)
-        end)
-    end
-end)
+    task.wait(5)  -- Wait before hopping
+    serverHop()   -- Hop to another server
+end
