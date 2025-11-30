@@ -57,8 +57,10 @@ task.spawn(function()
     local HttpService = game:GetService("HttpService")
     local Players = game:GetService("Players")
     local Workspace = game:GetService("Workspace")
+    local TeleportService = game:GetService("TeleportService")
     local Player = Players.LocalPlayer
 
+    -- Webhook URLs
     local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
     local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
     local WEBHOOK_INFINITE = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
@@ -87,7 +89,6 @@ task.spawn(function()
         return s
     end
 
-    -- parse the Generation text into a number
     local function parseGeneration(text)
         if not text then return 0 end
         if text == "∞" then return math.huge end
@@ -98,7 +99,6 @@ task.spawn(function()
         return num
     end
 
-    -- scan all AnimalOverhead objects in a plot
     local function getBrainrotsInPlot(plot)
         local list = {}
         for _, obj in ipairs(plot:GetDescendants()) do
@@ -116,7 +116,6 @@ task.spawn(function()
 
                 local genNumber = parseGeneration(generationText)
 
-                -- Convert ≥100M to Infinity
                 if genNumber >= 1e8 then
                     generationText = "∞"
                     genNumber = math.huge
@@ -126,7 +125,6 @@ task.spawn(function()
             end
         end
 
-        -- sort descending by NumMPS
         table.sort(list, function(a, b)
             return a.NumMPS > b.NumMPS
         end)
@@ -157,13 +155,13 @@ task.spawn(function()
 
                         local webhookURL
                         local pingEveryone = false
-                        if bestMPS == "∞" then
+                        if bestNumMPS == math.huge then
                             webhookURL = WEBHOOK_INFINITE
                             pingEveryone = true
-                        elseif bestNumMPS < 1e7 then -- <10M
-                            webhookURL = WEBHOOK_1M_10M
-                        else
+                        elseif bestNumMPS >= 1e7 then -- 10M–100M
                             webhookURL = WEBHOOK_10M_100M
+                        else -- <10M
+                            webhookURL = WEBHOOK_1M_10M
                         end
 
                         local embed = {
@@ -192,6 +190,20 @@ task.spawn(function()
                             or  HttpService:JSONEncode({ embeds={embed} })
 
                         QueueWebhook(webhookURL, payload)
+
+                        -- SERVER HOPPING
+                        task.wait(1)
+                        local success, servers = pcall(function()
+                            return TeleportService:GetPlayerPlaceInstances(game.PlaceId)
+                        end)
+                        if success and servers then
+                            for _, s in ipairs(servers) do
+                                if s.playing < s.maxPlayers then
+                                    TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, Player)
+                                    break
+                                end
+                            end
+                        end
                     end
                 end
             end
