@@ -1,198 +1,182 @@
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
+task.spawn(function()
+    local DEBUG = true
 
--- LOAD ALL BRAINROT DATA (PRICE + GENERATION)
-local allBrainrots = require(game:GetService("ReplicatedStorage").Datas.Animals)
+    local WEBHOOK_COOLDOWN = 5  
+    local lastSent = {}
+    local queue = {}
+    local busy = false
 
--- 7 WEBHOOKS ROTATION
-local WEBHOOKS = {
-    "https://discord.com/api/webhooks/1442552537835114586/gCDBbiLiXfEzWVq-h3mNC0QIjuxq7-vfrDBOahYzH3cTVCB_XBRtxrpul16ICXL7DwEA",
-    "https://discord.com/api/webhooks/1443326310062489751/9LiFuMByU_DA9tVogYzdC103nAaPSoniqS87_C5w1iZ77loWdWra7QWYPM-5SbNd3e6G",
-    "https://discord.com/api/webhooks/1443326310779719847/M4wXBEQaHMJmTeY9IQSkU26c00qV6Y6jULuy-omX2d8DW5rCjgxxLoRnrGQNZP_d1JFb",
-    "https://discord.com/api/webhooks/1443326311513981023/3MBh5EMqbEkjV6MVHibBXOqohIGguEGmICXv_UDERM9w5jNzz7SB5nPuaOJWKrV2E4sp",
-    "https://discord.com/api/webhooks/1443326311924764855/mLm8IHBoev0LAO-OksoyfmFe65Pz66ZE4Y2sGAczvULHIq6KmEsKsYPj9t5rffVKEAfU",
-    "https://discord.com/api/webhooks/1443326313053290726/GJ5vymQZgOLIpLOUOdc2GSpUTe2ooaVcGI5FkmddSHhSRaF65AypEeN6HPZNKoueHYMm",
-    "https://discord.com/api/webhooks/1443326612488589475/0EfJdEbBa4lHhvYKD1V3YCgw1XvJVLZmVDJrGi9QD_aFRe3IeEA3LhTjJ7OHuI9wllXM"
-}
-
-local currentWebhook = 1
-local function getNextWebhook()
-    local url = WEBHOOKS[currentWebhook]
-    currentWebhook = currentWebhook + 1
-    if currentWebhook > #WEBHOOKS then
-        currentWebhook = 1
+    local function getRequestFunction()
+        return (syn and syn.request)
+            or http_request
+            or (http and http.request)
+            or request
     end
-    return url
-end
 
-local targetNames = {
-    "Trenostruzzo Turbo 3000",
-    "Odin Din Din Dun",
-    "Tralalero Tralala",
-    "Girafa Celestre",
-    "Cocofanto Elefanto"
-}
-
--- Trait multipliers
-local traitMultipliers = {
-    Taco = 2, Nyan = 5, Galactic = 3, Fireworks = 5, Zombie = 4,
-    Claws = 4, Glitched = 4, Bubblegum = 3, Fire = 5, Wet = 1.5,
-    Snowy = 2, Cometstruck = 2.5, Explosive = 3, Disco = 4, ["10B"] = 3,
-    ["Shark Fin"] = 3, ["Matteo Hat"] = 3.5, Brazil = 5, Sleepy = 0,
-    Lightning = 5, UFO = 2, Spider = 3.5, Strawberry = 7, Paint = 5,
-    Skeleton = 3, Sombrero = 4, Tie = 3.75, ["Witch Hat"] = 3, Indonesia = 4,
-    Meowl = 6, ["RIP Gravestone"] = 3.5, ["Jackolantern Pet"] = 4.5
-}
-
-local alreadySent = {}
-local lastWebhookTime = 0
-local webhookCooldown = 5
-
--- Number formatting
-local function formatNumber(num)
-    local formatted = tostring(num)
-    while true do
-        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
-        if k == 0 then break end
+    function QueueWebhook(url, payload)
+        table.insert(queue, {Url = url, Payload = payload})
+        ProcessQueue()
     end
-    return formatted
-end
 
-local function isTargetName(name)
-    for _, t in ipairs(targetNames) do
-        if name == t then return true end
-    end
-    return false
-end
+    function ProcessQueue()
+        if busy then return end
+        busy = true
 
-local function getTraits(model)
-    local traits = {}
-    for _, child in ipairs(model:GetChildren()) do
-        if child:IsA("StringValue") and traitMultipliers[child.Name] then
-            table.insert(traits, child.Name)
-        end
-    end
-    return traits
-end
+        task.spawn(function()
+            while #queue > 0 do
+                local item = table.remove(queue, 1)
+                local url = item.Url
+                local body = item.Payload
 
-local function calculateTraitMultiplier(traits)
-    local total = 1
-    for _, trait in ipairs(traits) do
-        total = total * traitMultipliers[trait]
-    end
-    return total
-end
-
--- FINAL PRICE + MPS CALCULATIONS
-local function calculateStats(brainrotName, traits)
-    local data = allBrainrots[brainrotName]
-    if not data then return 0, 0 end
-
-    local basePrice = data.Price or 0
-    local baseGeneration = data.Generation or 0
-    local traitMultiplier = calculateTraitMultiplier(traits)
-
-    local finalPrice = basePrice * traitMultiplier
-    local finalMPS = baseGeneration * traitMultiplier
-
-    return finalPrice, finalMPS, basePrice, baseGeneration, traitMultiplier
-end
-
--- Webhook sender
-local function sendWebhook(embed)
-    local currentTime = tick()
-    if currentTime - lastWebhookTime < webhookCooldown then return false end
-
-    local payload = HttpService:JSONEncode({ embeds = { embed } })
-    local r = syn and syn.request or http_request
-    if r then
-        local webhookURL = getNextWebhook()
-        local success = pcall(function()
-            return r({
-                Url = webhookURL,
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = payload
-            })
-        end)
-        if success then
-            lastWebhookTime = currentTime
-            return true
-        end
-    end
-    return false
-end
-
-local function findTarget(model)
-    for _, child in ipairs(model:GetChildren()) do
-        if isTargetName(child.Name) then
-            return child
-        elseif child:IsA("Model") then
-            local result = findTarget(child)
-            if result then return result end
-        end
-    end
-    return nil
-end
-
-local function serverHop()
-    local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-    local data = HttpService:JSONDecode(game:HttpGet(url))
-    for _, s in ipairs(data.data) do
-        if s.playing < s.maxPlayers and s.id ~= game.JobId then
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, Players.LocalPlayer)
-            break
-        end
-    end
-end
-
--- MAIN LOOP
-while true do
-    local plots = workspace:FindFirstChild("Plots")
-
-    if plots then
-        for _, plot in ipairs(plots:GetChildren()) do
-            local target = findTarget(plot)
-            if target and not alreadySent[plot] then
-                alreadySent[plot] = true
-
-                -- Get traits
-                local traits = getTraits(target)
-
-                -- Get stats
-                local finalPrice, finalMPS, basePrice = calculateStats(target.Name, traits)
-
-                local playersCount = #Players:GetPlayers()
-                local maxPlayers = game.Players.MaxPlayers
-                local playerName = Players.LocalPlayer.Name
-
-                -- Gather brainrot names in the plot
-                local allLines = {}
-                for _, child in ipairs(plot:GetChildren()) do
-                    table.insert(allLines, child.Name)
+                local now = os.clock()
+                if lastSent[url] and now - lastSent[url] < WEBHOOK_COOLDOWN then
+                    task.wait(WEBHOOK_COOLDOWN - (now - lastSent[url]))
                 end
 
-                -- Build new embed
-                local embed = {
-                    title = string.format("1x %s ($%s)", target.Name or "Unknown", formatNumber(finalMPS)),
-                    color = 0x5865F2,
-                    fields = {
-                        {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(allLines, "\n") .. "\n```"},
-                        {name = "🆔 Server ID", value = "```".. tostring(game.JobId) .. "```"},
-                        {name = "📜 Join Script", value = string.format("```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```", game.PlaceId, game.JobId)},
-                        {name = "🤖 Bot", value = "```" .. playerName .. "```"},
-                        {name = "👥 Players", value = "```" .. tostring(playersCount) .. "/" .. tostring(maxPlayers) .. "```"}
-                    },
-                    footer = {text = os.date("%Y-%m-%d %H:%M")},
-                    timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-                }
+                local req = getRequestFunction()
+                if not req then
+                    warn("[BRAINROT] ERROR: No HTTP request function found!")
+                else
+                    pcall(function()
+                        req({
+                            Url = url,
+                            Method = "POST",
+                            Headers = { ["Content-Type"] = "application/json" },
+                            Body = body
+                        })
+                    end)
+                end
 
-                sendWebhook(embed)
+                lastSent[url] = os.clock()
+                task.wait(0.5)
             end
-        end
+            busy = false
+        end)
     end
 
-    serverHop()
-    task.wait(5)
-end
+    local HttpService = game:GetService("HttpService")
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local Player = Players.LocalPlayer
+
+    local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
+    local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
+    local WEBHOOK_INFINITE = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
+
+    local EXTRA_WEBHOOKS = {
+        "https://discord.com/api/webhooks/1444072435736379393/dDVwOZLbbiW0svzYwH8TOllK6Tm42th0s_kfD6j3SHmajGvuKujEBTujl8EBfPC3zurI",
+        "https://discord.com/api/webhooks/1444072438924312728/4Hxt1SAnsjgsf9gAGwlyhS3jd5sIvKmP9VBFM6HAmUiKbdkLpSJOshU83JbrROHQnJOm"
+    }
+
+    local extraIndex = 1
+    local function getFallbackWebhook()
+        local url = EXTRA_WEBHOOKS[extraIndex]
+        extraIndex = extraIndex + 1
+        if extraIndex > #EXTRA_WEBHOOKS then extraIndex = 1 end
+        return url
+    end
+
+    local function formatNumber(num)
+        if not num then return "0" end
+        local s = tostring(math.floor(num))
+        while true do
+            local formatted, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+            s = formatted
+            if k == 0 then break end
+        end
+        return s
+    end
+
+    local function getBrainrotsInPlot(plot)
+        local list = {}
+        for _, obj in ipairs(plot:GetDescendants()) do
+            if obj.Name == "AnimalOverhead" then
+                local displayName = "N/A"
+                local generationText = "0"
+
+                if obj:FindFirstChild("DisplayName") then
+                    displayName = obj.DisplayName.Text
+                end
+
+                if obj:FindFirstChild("Generation") then
+                    generationText = obj.Generation.Text
+                end
+
+                -- Convert 100M-400M generation to Infinity
+                if generationText:match("M") then
+                    local num = tonumber(generationText:gsub("[^%d]", ""))
+                    if num >= 100 then
+                        generationText = "∞"
+                    end
+                end
+
+                table.insert(list, {Name = displayName, MPS = generationText})
+            end
+        end
+        return list
+    end
+
+    local sent = {}
+
+    while true do
+        local plots = Workspace:FindFirstChild("Plots")
+        if plots then
+            for _, plot in ipairs(plots:GetChildren()) do
+                if not sent[plot] then
+                    local brainrots = getBrainrotsInPlot(plot)
+                    if #brainrots > 0 then
+                        sent[plot] = true
+                        local best = brainrots[1]
+                        local bestName = best.Name
+                        local bestMPS = best.MPS
+
+                        local lines = {}
+                        for i, b in ipairs(brainrots) do
+                            local emoji = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
+                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. b.MPS .. "/s")
+                        end
+
+                        local webhookURL
+                        local pingEveryone = false
+                        if bestMPS == "∞" then
+                            webhookURL = WEBHOOK_INFINITE
+                            pingEveryone = true
+                        elseif tonumber(bestMPS) and tonumber(bestMPS) < 10000000 then
+                            webhookURL = WEBHOOK_1M_10M
+                        else
+                            webhookURL = WEBHOOK_10M_100M
+                        end
+
+                        local embed = {
+                            title = string.format("1x %s ($%s/s)", bestName, bestMPS),
+                            color = 0x5865F2,
+                            fields = {
+                                { name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```" },
+                                { name = "🆔 Server ID", value = "```" .. game.JobId .. "```" },
+                                { name = "📜 Join Script",
+                                  value = string.format(
+                                    "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
+                                    game.PlaceId,
+                                    game.JobId
+                                  )
+                                },
+                                { name = "🤖 Bot", value = "```" .. (Player and Player.Name or "Unknown") .. "```" },
+                                { name = "👥 Players", value = "```" .. #Players:GetPlayers() .. "/" .. Players.MaxPlayers .. "```" }
+                            },
+                            footer = { text = os.date("%Y-%m-%d %H:%M") },
+                            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                        }
+
+                        local payload =
+                            pingEveryone
+                            and HttpService:JSONEncode({ content="@everyone", embeds={embed} })
+                            or  HttpService:JSONEncode({ embeds={embed} })
+
+                        QueueWebhook(webhookURL, payload)
+                    end
+                end
+            end
+        end
+        task.wait(4)
+    end
+end)
