@@ -61,7 +61,6 @@ task.spawn(function()
     local Player = Players.LocalPlayer
 
     local allBrainrots = require(game.ReplicatedStorage.Datas.Animals)
-    local allTraits = require(game.ReplicatedStorage.Datas.Traits)
 
     local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
     local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
@@ -91,48 +90,29 @@ task.spawn(function()
         return s
     end
 
-    local function getTraits(model)
-        local traits = {}
-        for _, child in ipairs(model:GetChildren()) do
-            if child:IsA("StringValue") and allTraits[child.Name] then
-                table.insert(traits, child.Name)
-            end
-        end
-        return traits
-    end
-
-    local function calculateTraitMultiplier(traits)
-        local total = 1
-        for _, t in ipairs(traits) do
-            local m = allTraits[t] and allTraits[t].MultiplierModifier or 1
-            total = total * m
-        end
-        return total
-    end
-
-    local function getFinalMPS(name, traits)
-        local data = allBrainrots[name]
-        if not data then return 0 end
-        return (data.Generation or 0) * calculateTraitMultiplier(traits)
-    end
-
     local function getBrainrotsInBase(model)
         local list = {}
         for _, c in ipairs(model:GetChildren()) do
             if allBrainrots[c.Name] then
-                local traits = getTraits(c)
-                local mps = getFinalMPS(c.Name, traits)
-                if mps >= 1000000 then
-                    table.insert(list, { Name = c.Name, MPS = mps })
-                end
+                table.insert(list, { Name = c.Name })
             elseif c:IsA("Model") then
                 for _, v in ipairs(getBrainrotsInBase(c)) do
                     table.insert(list, v)
                 end
             end
         end
-        table.sort(list, function(a,b) return a.MPS > b.MPS end)
         return list
+    end
+
+    local function getBrainrotMoney(plot)
+        local moneyInfo = {}
+        for _, obj in ipairs(plot:GetDescendants()) do
+            if obj.Name == "Generation" and obj.Parent and obj.Parent.Name == "AnimalOverhead" then
+                local value = obj.Text or obj.Value or 0
+                moneyInfo[obj.Parent.Name] = tonumber(value) or 0
+            end
+        end
+        return moneyInfo
     end
 
     local sent = {}
@@ -143,16 +123,19 @@ task.spawn(function()
             for _, plot in ipairs(plots:GetChildren()) do
                 if not sent[plot] then
                     local brainrots = getBrainrotsInBase(plot)
+                    local moneyInfo = getBrainrotMoney(plot)
+
                     if #brainrots > 0 then
                         sent[plot] = true
                         local best = brainrots[1]
                         local bestName = best.Name
-                        local bestMPS = best.MPS
+                        local bestMPS = moneyInfo[bestName] or 0
 
                         local lines = {}
                         for i, b in ipairs(brainrots) do
                             local emoji = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
-                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. formatNumber(b.MPS) .. "/s")
+                            local realMoney = moneyInfo[b.Name] or 0
+                            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. formatNumber(realMoney) .. "/s")
                         end
 
                         local webhookURL
