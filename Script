@@ -9,25 +9,47 @@ task.spawn(function()
 
     local Player = Players.LocalPlayer
 
+    -- PASTE YOUR FULL WEBHOOKS HERE
     local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
     local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
     local WEBHOOK_100M_INF = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
 
-    local function Request()
-        return (syn and syn.request)
-        or http_request
-        or (http and http.request)
-        or request
+    -- Universal HTTP Sender (works on every executor)
+    local function sendRequest(url, payload)
+        local encoded = HttpService:JSONEncode(payload)
+
+        local req =
+            (syn and syn.request)
+            or http_request
+            or (http and http.request)
+            or request
+
+        if not req then
+            warn("❌ Your executor does not support HTTP requests!")
+            return false
+        end
+
+        local ok, res = pcall(req, {
+            Url = url,
+            Method = "POST",
+            Headers = {["Content-Type"]="application/json"},
+            Body = encoded
+        })
+
+        if DEBUG then
+            if ok then print("✔ Webhook success!") else warn("❌ Webhook failed:", res) end
+        end
+
+        return ok
     end
 
     local function parseGen(text)
         if not text then return 0 end
         if text == "∞" then return math.huge end
-        text = text:upper()
-        local n = tonumber(text:gsub("[^%d%.]", ""))
-        if not n then return 0 end
-        if text:find("M") then n *= 1e6 end
-        if text:find("K") then n *= 1e3 end
+        local t = text:upper()
+        local n = tonumber(t:gsub("[^%d%.]", "")) or 0
+        if t:find("M") then n *= 1e6 end
+        if t:find("K") then n *= 1e3 end
         return n
     end
 
@@ -38,7 +60,7 @@ task.spawn(function()
                 local dn = obj:FindFirstChild("DisplayName")
                 local gn = obj:FindFirstChild("Generation")
                 if dn and gn then
-                    table.insert(list,{
+                    table.insert(list, {
                         Name = dn.Text,
                         MPS = gn.Text,
                         NumMPS = parseGen(gn.Text)
@@ -46,7 +68,7 @@ task.spawn(function()
                 end
             end
         end
-        table.sort(list,function(a,b) return a.NumMPS > b.NumMPS end)
+        table.sort(list, function(a,b) return a.NumMPS > b.NumMPS end)
         return list
     end
 
@@ -74,14 +96,18 @@ task.spawn(function()
 
             local list = getPlotBrainrots(plot)
             local lines = {}
-            for i, b in ipairs(list) do
+
+            for i,b in ipairs(list) do
                 local emoji = (i == 1 and "👑") or (i == 2 and "🥈") or (i == 3 and "🥉") or "💎"
-                table.insert(lines, emoji .. " " .. b.Name .. " — $" .. b.MPS)
+                table.insert(lines, emoji.." "..b.Name.." — $"..b.MPS)
                 if i >= 10 then break end
             end
 
-            local url, ping = WEBHOOK_1M_10M, false
-            if best.NumMPS >= 1e8 or best.NumMPS == math.huge then
+            -- 🎯 Tier Logic (your requested ranges)
+            local url = WEBHOOK_1M_10M
+            local ping = false
+
+            if best.NumMPS >= 1e8 then
                 url = WEBHOOK_100M_INF
                 ping = true
             elseif best.NumMPS >= 1e7 then
@@ -105,30 +131,16 @@ task.spawn(function()
                     {name="👥 Players", value="```"..#Players:GetPlayers().."/"..Players.MaxPlayers.."```"}
                 },
                 footer = {text=os.date("%Y-%m-%d %H:%M")},
-                timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ")
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
             }
 
-            local payload = ping
-                and HttpService:JSONEncode({content="@everyone", embeds={embed}})
-                or HttpService:JSONEncode({embeds={embed}})
-
-            local req = Request()
-            if req then
-                pcall(req, {
-                    Url = url,
-                    Method = "POST",
-                    Headers = {["Content-Type"]="application/json"},
-                    Body = payload
-                })
-            end
-
-            if DEBUG then warn("Found new highest — hopping in 4s") end
-            task.wait(4)
+            sendRequest(url, ping and {content="@everyone", embeds={embed}} or {embeds={embed}})
+            task.wait(2)
             TeleportService:Teleport(game.PlaceId)
 
         else
-            if DEBUG then warn("No better — hopping in 4s") end
-            task.wait(4)
+            if DEBUG then warn("No better — hopping in 2s") end
+            task.wait(2)
             TeleportService:Teleport(game.PlaceId)
         end
     end
