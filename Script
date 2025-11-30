@@ -1,204 +1,224 @@
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local TeleportService = game:GetService("TeleportService")
+-- Safer Brainrot Server Hopper / Webhook Notifier
+-- Fix: guard against nil NumMPS during comparisons and sorting (the "attempt to compare nil < number" error).
+-- Enable DEBUG = true to get diagnostic prints.
 
-local Player = Players.LocalPlayer
+task.spawn(function()
+    local DEBUG = false
+    local GLOBAL_BEST = 0
 
--- PASTE YOUR FULL WEBHOOKS HERE
-local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
-local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
-local WEBHOOK_100M_INF = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
+    local HttpService = game:GetService("HttpService")
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local TeleportService = game:GetService("TeleportService")
 
--- Universal HTTP Sender (works on many executors)
-local function sendRequest(url, payload)
-    local encoded = HttpService:JSONEncode(payload)
+    local Player = Players.LocalPlayer
 
-    local req =
-        (syn and syn.request)
-        or http_request
-        or (http and http.request)
-        or request
+    -- PASTE YOUR FULL WEBHOOKS HERE
+    local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
+    local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
+    local WEBHOOK_100M_INF = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
 
-    if not req then
-        warn("❌ Your executor does not support HTTP requests!")
-        return false
-    end
+    local function sendRequest(url, payload)
+        local encoded = HttpService:JSONEncode(payload)
 
-    -- Try calling the request with common key casings (some executors expect Url vs url)
-    local ok, res = pcall(function()
-        return req({
-            Url = url,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = encoded
-        })
-    end)
+        local req =
+            (syn and syn.request)
+            or http_request
+            or (http and http.request)
+            or request
 
-    if not ok then
-        -- fallback try lowercase keys
-        ok, res = pcall(function()
+        if not req then
+            warn("❌ Your executor does not support HTTP requests!")
+            return false
+        end
+
+        local ok, res = pcall(function()
             return req({
-                url = url,
-                method = "POST",
-                headers = {["content-type"] = "application/json"},
-                body = encoded
+                Url = url,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = encoded
             })
         end)
-    end
 
-    if DEBUG then
-        if ok then
-            print("✔ Webhook request succeeded:", (type(res) == "table" and (res.StatusCode or res.status) or tostring(res)))
-        else
-            warn("❌ Webhook request failed:", res)
-        end
-    end
-
-    return ok
-end
-
-local function parseGen(text)
-    if not text then return 0 end
-    if text == "∞" then return math.huge end
-    local t = tostring(text):upper()
-    local n = tonumber(t:gsub("[^%d%.]", "")) or 0
-    if t:find("M") then n = n * 1e6 end
-    if t:find("K") then n = n * 1e3 end
-    return n
-end
-
-local function getPlotBrainrots(plot)
-    local list = {}
-    for _, obj in ipairs(plot:GetDescendants()) do
-        if obj.Name == "AnimalOverhead" then
-            local dn = obj:FindFirstChild("DisplayName")
-            local gn = obj:FindFirstChild("Generation")
-            if dn and gn and dn:IsA("TextLabel") and gn:IsA("TextLabel") then
-                table.insert(list, {
-                    Name = dn.Text,
-                    MPS = gn.Text,
-                    NumMPS = parseGen(gn.Text)
+        if not ok then
+            ok, res = pcall(function()
+                return req({
+                    url = url,
+                    method = "POST",
+                    headers = {["content-type"] = "application/json"},
+                    body = encoded
                 })
-            elseif dn and gn then
-                -- fallback if different object types still have Text or Value
-                local nameText = dn.Text or (dn.Value and tostring(dn.Value)) or "Unknown"
-                local genText = gn.Text or (gn.Value and tostring(gn.Value)) or "0"
+            end)
+        end
+
+        if DEBUG then
+            if ok then
+                print("✔ Webhook request succeeded:", (type(res) == "table" and (res.StatusCode or res.status) or tostring(res)))
+            else
+                warn("❌ Webhook request failed:", res)
+            end
+        end
+
+        return ok
+    end
+
+    local function parseGen(text)
+        if not text then return 0 end
+        if text == "∞" then return math.huge end
+        local t = tostring(text):upper()
+        local n = tonumber(t:gsub("[^%d%.]", "")) or 0
+        if t:find("M") then n = n * 1e6 end
+        if t:find("K") then n = n * 1e3 end
+        return n
+    end
+
+    local function getPlotBrainrots(plot)
+        local list = {}
+        for _, obj in ipairs(plot:GetDescendants()) do
+            if obj.Name == "AnimalOverhead" then
+                local dn = obj:FindFirstChild("DisplayName")
+                local gn = obj:FindFirstChild("Generation")
+                local nameText = "Unknown"
+                local genText = "0"
+
+                if dn then
+                    if type(dn.Text) == "string" then
+                        nameText = dn.Text
+                    elseif dn.Value ~= nil then
+                        nameText = tostring(dn.Value)
+                    end
+                end
+
+                if gn then
+                    if type(gn.Text) == "string" then
+                        genText = gn.Text
+                    elseif gn.Value ~= nil then
+                        genText = tostring(gn.Value)
+                    end
+                end
+
+                local num = parseGen(genText) or 0
+                -- Ensure numeric NumMPS is always present (avoid nil)
                 table.insert(list, {
                     Name = nameText,
-                    MPS = genText,
-                    NumMPS = parseGen(genText)
+                    MPS = tostring(genText),
+                    NumMPS = num
                 })
             end
         end
+
+        -- Safe comparator: treat missing NumMPS as 0
+        table.sort(list, function(a, b)
+            local an = (a and a.NumMPS) or 0
+            local bn = (b and b.NumMPS) or 0
+            return an > bn
+        end)
+
+        return list
     end
-    table.sort(list, function(a, b) return a.NumMPS > b.NumMPS end)
-    return list
-end
 
-local function getBestInServer()
-    local best, bestPlot
-    local plots = Workspace:FindFirstChild("Plots")
-    if not plots then return nil, nil end
+    local function getBestInServer()
+        local best, bestPlot
+        local plots = Workspace:FindFirstChild("Plots")
+        if not plots then return nil, nil end
 
-    for _, plot in ipairs(plots:GetChildren()) do
-        local list = getPlotBrainrots(plot)
-        if #list > 0 then
-            if (not best) or (list[1].NumMPS > best.NumMPS) then
-                best = list[1]
-                bestPlot = plot
-            end
-        end
-    end
-    return best, bestPlot
-end
-
-while task.wait(4) do
-    local best, plot = getBestInServer()
-    if best and best.NumMPS > GLOBAL_BEST then
-        GLOBAL_BEST = best.NumMPS
-
-        local list = getPlotBrainrots(plot)
-        local lines = {}
-
-        for i, b in ipairs(list) do
-            local emoji = (i == 1 and "👑") or (i == 2 and "🥈") or (i == 3 and "🥉") or "💎"
-            table.insert(lines, emoji .. " " .. b.Name .. " — $" .. b.MPS)
-            if i >= 10 then break end
-        end
-
-        -- 🎯 Tier Logic (requested ranges)
-        local url = WEBHOOK_1M_10M
-        local ping = false
-
-        if best.NumMPS >= 1e8 then
-            url = WEBHOOK_100M_INF
-            ping = true
-        elseif best.NumMPS >= 1e7 then
-            url = WEBHOOK_10M_100M
-        end
-
-        local playerName = (Player and Player.Name) and Player.Name or "Unknown"
-        local playersCount = #Players:GetPlayers()
-        local maxPlayers = (Players.MaxPlayers or "N/A")
-
-        local embed = {
-            title = string.format("1x %s ($%s)", best.Name, best.MPS),
-            color = 0x5865F2,
-            fields = {
-                {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```"},
-                {name = "🆔 Server ID", value = "```" .. tostring(game.JobId or "Unknown") .. "```"},
-                {
-                    name = "📜 Join Script",
-                    value = string.format(
-                        "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
-                        tonumber(game.PlaceId) or 0, tostring(game.JobId or "")
-                    )
-                },
-                {name = "🤖 Bot", value = "```" .. playerName .. "```"},
-                {name = "👥 Players", value = "```" .. tostring(playersCount) .. "/" .. tostring(maxPlayers) .. "```"}
-            },
-            footer = {text = os.date("%Y-%m-%d %H:%M")},
-            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
-        }
-
-        -- Attempt to send webhook; include mention if high tier
-        local payload = ping and {content = "@everyone", embeds = {embed}} or {embeds = {embed}}
-        local ok = sendRequest(url, payload)
-
-        if not ok and DEBUG then
-            warn("Failed to send webhook for", best.Name)
-        end
-
-        task.wait(2)
-        -- Safely attempt teleport; pcall so script won't error out if teleport fails
-        local successTeleport, err = pcall(function()
-            -- Use Teleport (client allowed on many executors). If you need to pass player, some environments require it.
-            if Player then
-                -- try client teleport with just placeId first
-                local s, e = pcall(function() TeleportService:Teleport(game.PlaceId) end)
-                if not s then
-                    -- fallback: server-style teleport (may error on client, but wrapped in pcall)
-                    TeleportService:Teleport(game.PlaceId, Player)
+        for _, plot in ipairs(plots:GetChildren()) do
+            local list = getPlotBrainrots(plot)
+            if #list > 0 then
+                local candidate = list[1]
+                local candNum = (candidate and candidate.NumMPS) or 0
+                if (not best) or (candNum > ((best.NumMPS) or 0)) then
+                    best = candidate
+                    bestPlot = plot
                 end
-            else
-                -- run teleport without player if LocalPlayer isn't present (rare)
-                TeleportService:Teleport(game.PlaceId)
             end
-        end)
-        if DEBUG and not successTeleport then
-            warn("Teleport failed:", err)
         end
-
-    else
-        if DEBUG then warn("No better found — hopping in 2s") end
-        task.wait(2)
-        pcall(function()
-            if Player then
-                TeleportService:Teleport(game.PlaceId)
-            else
-                TeleportService:Teleport(game.PlaceId)
-            end
-        end)
+        return best, bestPlot
     end
-end
+
+    while task.wait(4) do
+        local best, plot = getBestInServer()
+        local bestNum = (best and best.NumMPS) or 0
+
+        if best and bestNum > GLOBAL_BEST then
+            GLOBAL_BEST = bestNum
+
+            local list = getPlotBrainrots(plot)
+            local lines = {}
+
+            for i, b in ipairs(list) do
+                local emoji = (i == 1 and "👑") or (i == 2 and "🥈") or (i == 3 and "🥉") or "💎"
+                table.insert(lines, emoji .. " " .. (b.Name or "Unknown") .. " — $" .. (b.MPS or "0"))
+                if i >= 10 then break end
+            end
+
+            local url = WEBHOOK_1M_10M
+            local ping = false
+
+            -- Use bestNum (guaranteed number) for comparisons
+            if bestNum >= 1e8 then
+                url = WEBHOOK_100M_INF
+                ping = true
+            elseif bestNum >= 1e7 then
+                url = WEBHOOK_10M_100M
+            end
+
+            local playerName = (Player and Player.Name) and Player.Name or "Unknown"
+            local playersCount = #Players:GetPlayers()
+            local maxPlayers = (Players.MaxPlayers or "N/A")
+
+            local embed = {
+                title = string.format("1x %s ($%s)", best.Name or "Unknown", best.MPS or "0"),
+                color = 0x5865F2,
+                fields = {
+                    {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```"},
+                    {name = "🆔 Server ID", value = "```" .. tostring(game.JobId or "Unknown") .. "```"},
+                    {
+                        name = "📜 Join Script",
+                        value = string.format(
+                            "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
+                            tonumber(game.PlaceId) or 0, tostring(game.JobId or "")
+                        )
+                    },
+                    {name = "🤖 Bot", value = "```" .. playerName .. "```"},
+                    {name = "👥 Players", value = "```" .. tostring(playersCount) .. "/" .. tostring(maxPlayers) .. "```"}
+                },
+                footer = {text = os.date("%Y-%m-%d %H:%M")},
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+            }
+
+            local payload = ping and {content = "@everyone", embeds = {embed}} or {embeds = {embed}}
+            local ok = sendRequest(url, payload)
+            if not ok and DEBUG then warn("Failed to send webhook for", best.Name or "Unknown") end
+
+            task.wait(2)
+            pcall(function()
+                if Player then
+                    local s, _ = pcall(function() TeleportService:Teleport(game.PlaceId) end)
+                    if not s then
+                        pcall(function() TeleportService:Teleport(game.PlaceId, Player) end)
+                    end
+                else
+                    pcall(function() TeleportService:Teleport(game.PlaceId) end)
+                end
+            end)
+        else
+            if DEBUG then
+                if not best then
+                    warn("No best found this iteration.")
+                else
+                    warn("BestNum (" .. tostring(bestNum) .. ") <= GLOBAL_BEST (" .. tostring(GLOBAL_BEST) .. ") — hopping")
+                end
+            end
+            task.wait(2)
+            pcall(function()
+                if Player then
+                    TeleportService:Teleport(game.PlaceId)
+                else
+                    TeleportService:Teleport(game.PlaceId)
+                end
+            end)
+        end
+    end
+end)
