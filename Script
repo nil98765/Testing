@@ -1,7 +1,7 @@
 task.spawn(function()
     local DEBUG = true
 
-    local WEBHOOK_COOLDOWN = 5  
+    local WEBHOOK_COOLDOWN = 5
     local lastSent = {}
     local queue = {}
     local busy = false
@@ -34,9 +34,7 @@ task.spawn(function()
                 end
 
                 local req = getRequestFunction()
-                if not req then
-                    warn("[BRAINROT] ERROR: No HTTP request function found!")
-                else
+                if req then
                     pcall(function()
                         req({
                             Url = url,
@@ -45,6 +43,8 @@ task.spawn(function()
                             Body = body
                         })
                     end)
+                else
+                    warn("[BRAINROT] No HTTP request function found!")
                 end
 
                 lastSent[url] = os.clock()
@@ -60,24 +60,11 @@ task.spawn(function()
     local TeleportService = game:GetService("TeleportService")
     local Player = Players.LocalPlayer
 
-    -- Webhook URLs
     local WEBHOOK_1M_10M = "https://discord.com/api/webhooks/1444263728446050455/iYXA8aaJOfWhlgCQ04YwW3vzraBAwIEvDi7-EdVgU--ACEXHktcwN69XuEarlVwD6ZR-"
     local WEBHOOK_10M_100M = "https://discord.com/api/webhooks/1444263853624918046/u2aeooCDow7VJnJ7kt8oGmylzWIIIIirbnse0VKs1EU_PZPiPUvW8duKk33Qh88xAIiU"
-    local WEBHOOK_INFINITE = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
+    local WEBHOOK_100M_INF = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_"
 
-    local EXTRA_WEBHOOKS = {
-        "https://discord.com/api/webhooks/1444072435736379393/dDVwOZLbbiW0svzYwH8TOllK6Tm42th0s_kfD6j3SHmajGvuKujEBTujl8EBfPC3zurI",
-        "https://discord.com/api/webhooks/1444072438924312728/4Hxt1SAnsjgsf9gAGwlyhS3jd5sIvKmP9VBFM6HAmUiKbdkLpSJOshU83JbrROHQnJOm"
-    }
-
-    local extraIndex = 1
-    local function getFallbackWebhook()
-        local url = EXTRA_WEBHOOKS[extraIndex]
-        extraIndex = extraIndex + 1
-        if extraIndex > #EXTRA_WEBHOOKS then extraIndex = 1 end
-        return url
-    end
-
+    -- Format numbers with commas
     local function formatNumber(num)
         if not num then return "0" end
         local s = tostring(math.floor(num))
@@ -89,6 +76,7 @@ task.spawn(function()
         return s
     end
 
+    -- Convert generation text to number
     local function parseGeneration(text)
         if not text then return 0 end
         if text == "∞" then return math.huge end
@@ -103,19 +91,10 @@ task.spawn(function()
         local list = {}
         for _, obj in ipairs(plot:GetDescendants()) do
             if obj.Name == "AnimalOverhead" then
-                local displayName = "N/A"
-                local generationText = "0"
-
-                if obj:FindFirstChild("DisplayName") then
-                    displayName = obj.DisplayName.Text
-                end
-
-                if obj:FindFirstChild("Generation") then
-                    generationText = obj.Generation.Text
-                end
+                local displayName = obj:FindFirstChild("DisplayName") and obj.DisplayName.Text or "N/A"
+                local generationText = obj:FindFirstChild("Generation") and obj.Generation.Text or "0"
 
                 local genNumber = parseGeneration(generationText)
-
                 if genNumber >= 1e8 then
                     generationText = "∞"
                     genNumber = math.huge
@@ -132,16 +111,16 @@ task.spawn(function()
         return list
     end
 
-    local sent = {}
+    local sentPlots = {}
 
     while true do
         local plots = Workspace:FindFirstChild("Plots")
         if plots then
             for _, plot in ipairs(plots:GetChildren()) do
-                if not sent[plot] then
+                if not sentPlots[plot] then
                     local brainrots = getBrainrotsInPlot(plot)
                     if #brainrots > 0 then
-                        sent[plot] = true
+                        sentPlots[plot] = true
                         local best = brainrots[1]
                         local bestName = best.Name
                         local bestMPS = best.MPS
@@ -156,11 +135,11 @@ task.spawn(function()
                         local webhookURL
                         local pingEveryone = false
                         if bestNumMPS == math.huge then
-                            webhookURL = WEBHOOK_INFINITE
+                            webhookURL = WEBHOOK_100M_INF
                             pingEveryone = true
-                        elseif bestNumMPS >= 1e7 then -- 10M–100M
+                        elseif bestNumMPS >= 1e7 then
                             webhookURL = WEBHOOK_10M_100M
-                        else -- <10M
+                        else
                             webhookURL = WEBHOOK_1M_10M
                         end
 
@@ -187,7 +166,7 @@ task.spawn(function()
                         local payload =
                             pingEveryone
                             and HttpService:JSONEncode({ content="@everyone", embeds={embed} })
-                            or  HttpService:JSONEncode({ embeds={embed} })
+                            or HttpService:JSONEncode({ embeds={embed} })
 
                         QueueWebhook(webhookURL, payload)
 
