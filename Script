@@ -13,7 +13,10 @@ local WEBHOOKS = {
     {url = "https://discord.com/api/webhooks/1444263961573724180/8m_9-VsRfxaRU_D7LmUqIM4iVEKP_QlGSdvW1RiC4juu6tkfipBiC3Q-QSQnm4N4XU5_", min = 1e8, max = 1e12, ping = true}      -- 100M+
 }
 
--- Get the correct webhook based on MPS
+-- Cache of servers we've already sent webhooks for
+local sentServers = {}
+
+-- Get webhook based on generation
 local function getWebhook(mps)
     for _, wb in ipairs(WEBHOOKS) do
         if mps >= wb.min and mps < wb.max then
@@ -23,7 +26,7 @@ local function getWebhook(mps)
     return nil, false
 end
 
--- Number formatting
+-- Format large numbers
 local function formatNumber(num)
     local formatted = tostring(math.floor(num))
     while true do
@@ -33,7 +36,7 @@ local function formatNumber(num)
     return formatted
 end
 
--- Scan plots and calculate real generation
+-- Scan a plot for brainrots and determine the best one
 local function scanPlot(plot)
     local output = {}
     local best = {MPS = 0, Name = "N/A"}
@@ -57,22 +60,10 @@ local function scanPlot(plot)
     return output, best
 end
 
--- Send webhook
+-- Send a Discord webhook
 local function sendWebhook(url, ping, embed)
     local payload = HttpService:JSONEncode(ping and {content = "@everyone", embeds = {embed}} or {embeds = {embed}})
-
-    local requestFunction = nil
-
-    -- Check different HTTP request functions depending on executor
-    if syn and syn.request then
-        requestFunction = syn.request
-    elseif http_request then
-        requestFunction = http_request
-    elseif fluxus and fluxus.request then
-        requestFunction = fluxus.request
-    elseif request then
-        requestFunction = request
-    end
+    local requestFunction = syn and syn.request or http_request or fluxus and fluxus.request or request
 
     if requestFunction then
         local success, err = pcall(function()
@@ -87,7 +78,7 @@ local function sendWebhook(url, ping, embed)
             warn("Webhook failed: ", err)
         end
     else
-        warn("No valid HTTP request function found!")
+        warn("No valid HTTP request function found! Enable HTTP requests in your executor.")
     end
 end
 
@@ -111,20 +102,35 @@ end
 while true do
     local plots = Workspace:FindFirstChild("Plots")
     if plots then
-        for _, plot in ipairs(plots:GetChildren()) do
-            local lines, best = scanPlot(plot)
-            if #lines > 0 then
+        -- Only send webhook if we haven't for this server yet
+        if not sentServers[game.JobId] then
+            local allLines = {}
+            local bestOverall = {MPS = 0, Name = "N/A"}
+
+            for _, plot in ipairs(plots:GetChildren()) do
+                if plot:IsA("Model") then
+                    local lines, best = scanPlot(plot)
+                    for _, l in ipairs(lines) do
+                        table.insert(allLines, l)
+                    end
+                    if best.MPS > bestOverall.MPS then
+                        bestOverall = best
+                    end
+                end
+            end
+
+            if #allLines > 0 then
                 local playersCount = #Players:GetPlayers()
-                local maxPlayers = 8  -- Steal a Brainrot max players
+                local maxPlayers = 8
                 local playerName = Players.LocalPlayer.Name
 
-                local webhookURL, pingEveryone = getWebhook(best.MPS)
+                local webhookURL, pingEveryone = getWebhook(bestOverall.MPS)
                 if webhookURL then
                     local embed = {
-                        title = string.format("1x %s ($%s)", best.Name or "Unknown", formatNumber(best.MPS)),
+                        title = string.format("1x %s ($%s)", bestOverall.Name or "Unknown", formatNumber(bestOverall.MPS)),
                         color = 0x5865F2,
                         fields = {
-                            {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(lines, "\n") .. "\n```"},
+                            {name = "🧱 Brainrots in Base", value = "```\n" .. table.concat(allLines, "\n") .. "\n```"},
                             {name = "🆔 Server ID", value = "```".. tostring(game.JobId) .. "```"},
                             {name = "📜 Join Script", value = string.format("```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```", game.PlaceId, game.JobId)},
                             {name = "🤖 Bot", value = "```" .. playerName .. "```"},
@@ -135,11 +141,12 @@ while true do
                     }
 
                     sendWebhook(webhookURL, pingEveryone, embed)
+                    sentServers[game.JobId] = true
                 end
             end
         end
     end
 
-    task.wait(5)  -- Wait before hopping
-    serverHop()   -- Hop to another server
+    task.wait(5)
+    serverHop()
 end
