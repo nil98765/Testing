@@ -13,7 +13,6 @@ task.spawn(function()
             (fluxus and fluxus.request) or
             (krnl and krnl.request) or
             (wrap and wrap.request) or
-            -- last fallback: Roblox HttpPost bypass (some executors unlock it)
             function(data)
                 if game and game.HttpPost then
                     return pcall(function()
@@ -27,7 +26,7 @@ task.spawn(function()
     ---------------------------------------------------------------------
     -- WEBHOOK QUEUE
     ---------------------------------------------------------------------
-    local WEBHOOK_COOLDOWN = 5  
+    local WEBHOOK_COOLDOWN = 5
     local lastSent = {}
     local queue = {}
     local busy = false
@@ -50,7 +49,6 @@ task.spawn(function()
                 local item = table.remove(queue, 1)
                 local url, body = item.Url, item.Payload
 
-                -- cooldown
                 local now = os.clock()
                 if lastSent[url] and now - lastSent[url] < WEBHOOK_COOLDOWN then
                     task.wait(WEBHOOK_COOLDOWN - (now - lastSent[url]))
@@ -58,7 +56,7 @@ task.spawn(function()
 
                 local req = getRequestFunction()
                 if not req then
-                    warn("[BRAINROT] NO HTTP FUNCTIONS FOUND IN EXECUTOR!")
+                    warn("[BRAINROT] NO HTTP FUNCTIONS FOUND!")
                 else
                     pcall(function()
                         req({
@@ -73,6 +71,7 @@ task.spawn(function()
                 lastSent[url] = os.clock()
                 task.wait(0.4)
             end
+
             busy = false
         end)
     end
@@ -104,7 +103,7 @@ task.spawn(function()
     local extraIndex = 1
     local function getFallbackWebhook()
         local url = EXTRA_WEBHOOKS[extraIndex]
-        extraIndex = extraIndex + 1
+        extraIndex += 1
         if extraIndex > #EXTRA_WEBHOOKS then extraIndex = 1 end
         return url
     end
@@ -122,18 +121,30 @@ task.spawn(function()
         return s
     end
 
+    -- Supports: $9M/s | 9M | 14.2M | 900K | 1.2B | 3.4T | etc
+    local multipliers = {
+        K = 1e3,
+        M = 1e6,
+        B = 1e9,
+        T = 1e12,
+        Q = 1e15
+    }
+
     local function parseMoney(str)
-        str = tostring(str)
-        local clean = str:gsub("%$", ""):gsub("/s", "")
-        local number, unit = clean:match("([%d%.]+)(%a?)")
+        if not str then return 0 end
+        str = tostring(str):gsub("%$", ""):gsub("/s", ""):gsub("Generation", ""):gsub("%s+", "")
+        local number, unit = str:match("([%d%.]+)(%a?)")
         if not number then return 0 end
 
         local n = tonumber(number) or 0
-        if unit == "M" then n *= 1e6
-        elseif unit == "K" then n *= 1e3 end
-
-        return n
+        local mult = multipliers[unit] or 1
+        return n * mult
     end
+
+    ---------------------------------------------------------------------
+    -- BRAINROT SCAN
+    ---------------------------------------------------------------------
+    local scanned = {}
 
     local function getAllBrainrots()
         local list = {}
@@ -142,28 +153,50 @@ task.spawn(function()
 
         for _, plot in ipairs(plots:GetChildren()) do
             for _, obj in ipairs(plot:GetDescendants()) do
-                if obj.Name == "Generation" and obj.Parent and obj.Parent.Name == "AnimalOverhead" then
-                    local name = obj.Parent.Parent.Name
-                    local money = parseMoney(obj.Text or obj.Value or "$0/s")
 
-                    if money >= 1e6 then
-                        table.insert(list, {Name=name, MPS=money})
+                if obj.Name == "AnimalOverhead" then
+                    local overhead = obj
+                    local bb = overhead.Parent
+                    if not bb then continue end
+
+                    local key = bb:GetFullName()
+                    if scanned[key] then continue end
+                    scanned[key] = true
+
+                    local display = overhead:FindFirstChild("DisplayName")
+                    local gen = overhead:FindFirstChild("Generation")
+
+                    local displayName = display and (display.Text or display.Value) or "Unknown"
+                    local genText = gen and (gen.Text or gen.Value) or "0"
+
+                    local mps = parseMoney(genText)
+
+                    if mps >= 1e6 then
+                        table.insert(list, {
+                            Name = displayName,
+                            MPS = mps,
+                            GenRaw = genText
+                        })
                     end
                 end
             end
         end
 
-        table.sort(list, function(a,b) return a.MPS > b.MPS end)
+        table.sort(list, function(a, b) return a.MPS > b.MPS end)
         return list
     end
 
+    ---------------------------------------------------------------------
+    -- SERVER HOP
+    ---------------------------------------------------------------------
     local function serverHop()
         local url = "https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100"
         local ok, data = pcall(function()
             return HttpService:JSONDecode(game:HttpGet(url))
         end)
+
         if ok and data and data.data then
-            for _,s in ipairs(data.data) do
+            for _, s in ipairs(data.data) do
                 if s.playing < s.maxPlayers and s.id ~= game.JobId then
                     TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, Player)
                 end
@@ -176,11 +209,13 @@ task.spawn(function()
     ---------------------------------------------------------------------
     while true do
         local brainrots = getAllBrainrots()
+
         if #brainrots > 0 then
             local lines = {}
-            for i,b in ipairs(brainrots) do
-                local emoji = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
-                table.insert(lines, emoji.." "..b.Name.." — $"..formatNumber(b.MPS).."/s")
+
+            for i, b in ipairs(brainrots) do
+                local icon = (i==1 and "👑") or (i==2 and "🥈") or (i==3 and "🥉") or "💎"
+                table.insert(lines, icon.." "..b.Name.." — "..b.GenRaw)
             end
 
             local best = brainrots[1]
@@ -199,7 +234,7 @@ task.spawn(function()
                 title = string.format("1x %s ($%s/s)", bestName, formatNumber(bestMPS)),
                 color = 0x5865F2,
                 fields = {
-                    {name="🧩 Pets", value="```1x "..bestName.." ($"..formatNumber(bestMPS).."/s)```"},
+                    {name="🧩 Pet", value="```"..bestName.." — "..best.GenRaw.."```"},
                     {name="🆔 Server ID", value="```"..game.JobId.."```"},
                     {name="📜 Join Script", value=string.format(
                         "```lua\ngame:GetService(\"TeleportService\"):TeleportToPlaceInstance(%d, \"%s\", game.Players.LocalPlayer)\n```",
@@ -207,9 +242,12 @@ task.spawn(function()
                     )},
                     {name="🤖 Bot", value="```"..(Player and Player.Name or "Unknown").."```"},
                     {name="👥 Players", value="```"..#Players:GetPlayers().."/"..Players.MaxPlayers.."```"},
-                    {name="🧱 Brainrots", value="```\n"..table.concat(lines,"\n").."\n```"},
+                    {
+                        name="🧱 Brainrots",
+                        value="```\n"..table.concat(lines, "\n").."\n```"
+                    }
                 },
-                footer={text=os.date("%Y-%m-%d %H:%M")},
+                footer = {text=os.date("%Y-%m-%d %H:%M")},
                 timestamp=os.date("!%Y-%m-%dT%H:%M:%SZ")
             }
 
